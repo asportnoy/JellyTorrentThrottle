@@ -7,8 +7,8 @@ services:
       - "18080:8080" # <Host Port>:<Container Port (do not change)>
     environment:
       # Override any variable here or use a .env file next to this compose file.
-      - WEBHOOK_HOST=0.0.0.0
-      - WEBHOOK_PORT=8080
+      - WEBHOOK_HOST=0.0.0.0 # (do not change)
+      - WEBHOOK_PORT=8080 # (do not change)
       - QBITTORRENT_URL=http://qbittorrent:8080
       - QBITTORRENT_USERNAME=admin
       - QBITTORRENT_PASSWORD=adminadmin
