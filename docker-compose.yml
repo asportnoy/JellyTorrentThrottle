@@ -1,0 +1,24 @@
+services:
+  jelly-torrent-throttle:
+    image: jedrzejme/jelly-torrent-throttle:v1.0.0
+    container_name: jelly-torrent-throttle
+    restart: unless-stopped
+    ports:
+      - "18080:8080" # <Host Port>:<Container Port (do not change)>
+    environment:
+      # Override any variable here or use a .env file next to this compose file.
+      - WEBHOOK_HOST=0.0.0.0
+      - WEBHOOK_PORT=8080
+      - QBITTORRENT_URL=http://qbittorrent:8080
+      - QBITTORRENT_USERNAME=admin
+      - QBITTORRENT_PASSWORD=adminadmin
+      - SPEED_MODE=alternative
+      - THROTTLE_DOWNLOAD_LIMIT=1024
+      - THROTTLE_UPLOAD_LIMIT=512
+      - LOG_LEVEL=INFO
+      - LOG_FILE=logs/jellyfin_qbittorrent.log # (do not change)
+    volumes:
+      - ./logs:/app/logs # <Host Log Directory>:<Container Log Directory (do not change)>
+    # Alternatively, load all variables from a .env file:
+    # env_file:
+    #   - .env
