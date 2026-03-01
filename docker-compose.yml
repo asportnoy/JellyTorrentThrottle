@@ -13,8 +13,8 @@ services:
       - QBITTORRENT_USERNAME=admin
       - QBITTORRENT_PASSWORD=adminadmin
       - SPEED_MODE=alternative
-      - THROTTLE_DOWNLOAD_LIMIT=1024
-      - THROTTLE_UPLOAD_LIMIT=512
+      - THROTTLE_DOWNLOAD_LIMIT=1024 # in KiB/s
+      - THROTTLE_UPLOAD_LIMIT=512 # in KiB/s
       - LOG_LEVEL=INFO
       - LOG_FILE=logs/jellyfin_qbittorrent.log # (do not change)
     volumes:
