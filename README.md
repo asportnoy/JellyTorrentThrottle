@@ -34,7 +34,7 @@
 
 **❓ How to use it?**
 * [**Using docker-compose**](#-using-docker-compose-to-run-jelly-torrent-throttle)
-* [**Using Python**](-using-python-to-run-jelly-torrent-throttle)
+* [**Using Python**](#-using-python-to-run-jelly-torrent-throttle)
 
 **❓ What did I use?**
 * [Python](https://www.python.org/)
