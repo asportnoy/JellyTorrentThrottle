@@ -62,6 +62,22 @@ if LOG_FILE:
     _fh.setFormatter(_fmt)
     log.addHandler(_fh)
 
+
+def _format_kib_per_s(kib: Optional[int]) -> str:
+    """Format a KiB/s value for logs.
+
+    Returns a string like "512 KiB/s" or "unlimited" for 0. None -> "unknown".
+    """
+    if kib is None:
+        return "unknown"
+    try:
+        kib = int(kib)
+    except Exception:
+        return str(kib)
+    if kib == 0:
+        return "unlimited"
+    return f"{kib} KiB/s"
+
 # ── qBittorrent API client ───────────────────────────────────────────────────
 _session = http_requests.Session()
 _authenticated = False
@@ -126,18 +142,23 @@ def _qb_api_get_json(endpoint: str) -> Optional[dict]:
 
 
 def _qb_set_speed_limits(dl_limit: int, ul_limit: int) -> bool:
-    """Directly set global download/upload limits (KiB/s). 0 = unlimited.
+    """Directly set global download/upload limits.
 
-    Uses the idempotent setDownloadLimit / setUploadLimit endpoints.
-    No toggle, no state-reading — always produces the exact result requested.
+    This module uses KiB/s for internal values (from the environment).
+    qBittorrent Web API expects limits in bytes/s — convert before sending.
+    0 = unlimited.
     """
-    ok_dl = _qb_api_post("/api/v2/transfer/setDownloadLimit", {"limit": dl_limit})
-    ok_ul = _qb_api_post("/api/v2/transfer/setUploadLimit", {"limit": ul_limit})
+    dl_bytes = int(dl_limit) * 1024 if dl_limit else 0
+    ul_bytes = int(ul_limit) * 1024 if ul_limit else 0
+
+    ok_dl = _qb_api_post("/api/v2/transfer/setDownloadLimit", {"limit": dl_bytes})
+    ok_ul = _qb_api_post("/api/v2/transfer/setUploadLimit", {"limit": ul_bytes})
     if ok_dl and ok_ul:
         if dl_limit == 0 and ul_limit == 0:
             log.info("Speed limits removed (unlimited)")
         else:
-            log.info("Speed limits set → DL %d KiB/s, UL %d KiB/s", dl_limit, ul_limit)
+            log.info("Speed limits set → DL %s, UL %s",
+                     _format_kib_per_s(dl_limit), _format_kib_per_s(ul_limit))
     return ok_dl and ok_ul
 
 
@@ -152,8 +173,13 @@ def _qb_fetch_alt_limits() -> tuple:
         return None
     alt_dl = prefs.get("alt_dl_limit", 0)
     alt_ul = prefs.get("alt_up_limit", 0)
-    log.info("Fetched qBittorrent alt-speed limits: DL %d, UL %d", alt_dl, alt_ul)
-    return (alt_dl, alt_ul)
+
+    # qBittorrent returns bytes/s — convert to KiB/s for internal use
+    alt_dl_kib = alt_dl // 1024 if alt_dl else 0
+    alt_ul_kib = alt_ul // 1024 if alt_ul else 0
+    log.info("Fetched qBittorrent alt-speed limits: DL %s, UL %s",
+             _format_kib_per_s(alt_dl_kib), _format_kib_per_s(alt_ul_kib))
+    return (alt_dl_kib, alt_ul_kib)
 
 
 # ── Throttle / Restore helpers ───────────────────────────────────────────────
@@ -176,7 +202,11 @@ def _qb_get_current_limits() -> Optional[tuple]:
         return None
     dl = info.get("dl_rate_limit", 0)
     ul = info.get("up_rate_limit", 0)
-    return (dl, ul)
+
+    # Convert bytes/s -> KiB/s
+    dl_kib = dl // 1024 if dl else 0
+    ul_kib = ul // 1024 if ul else 0
+    return (dl_kib, ul_kib)
 
 
 def _resolve_throttle_limits():
@@ -192,7 +222,8 @@ def _resolve_throttle_limits():
         result = _qb_fetch_alt_limits()
         if result:
             _throttle_dl, _throttle_ul = result
-            log.info("Using qBittorrent alt-speed limits: DL %d KiB/s, UL %d KiB/s", _throttle_dl, _throttle_ul)
+            log.info("Using qBittorrent alt-speed limits: DL %s, UL %s",
+                     _format_kib_per_s(_throttle_dl), _format_kib_per_s(_throttle_ul))
         else:
             log.warning("Could not fetch alt-speed limits; falling back to .env values")
     _limits_resolved = True
@@ -208,7 +239,8 @@ def throttle():
         current = _qb_get_current_limits()
         if current:
             _saved_dl, _saved_ul = current
-            log.info("Saved previous limits: DL %d KiB/s, UL %d KiB/s", _saved_dl, _saved_ul)
+            log.info("Saved previous limits: DL %s, UL %s",
+                     _format_kib_per_s(_saved_dl), _format_kib_per_s(_saved_ul))
         else:
             _saved_dl, _saved_ul = 0, 0
             log.warning("Could not read current limits; will restore to unlimited")
@@ -225,7 +257,8 @@ def restore():
     """
     dl = _saved_dl if _saved_dl is not None else 0
     ul = _saved_ul if _saved_ul is not None else 0
-    log.info("Restoring previous limits: DL %d KiB/s, UL %d KiB/s", dl, ul)
+    log.info("Restoring previous limits: DL %s, UL %s",
+             _format_kib_per_s(dl), _format_kib_per_s(ul))
     _qb_set_speed_limits(dl, ul)
 
 
@@ -311,8 +344,8 @@ if __name__ == "__main__":
     log.info("  qBittorrent   : %s", QB_URL)
     log.info("  Speed mode    : %s", SPEED_MODE)
     if SPEED_MODE == "custom":
-        log.info("  Throttle DL   : %d KiB/s", THROTTLE_DL)
-        log.info("  Throttle UL   : %d KiB/s", THROTTLE_UL)
+        log.info("  Throttle DL   : %s", _format_kib_per_s(THROTTLE_DL))
+        log.info("  Throttle UL   : %s", _format_kib_per_s(THROTTLE_UL))
     else:
         log.info("  Throttle      : will use qBittorrent alt-speed limits")
     if LOG_FILE:

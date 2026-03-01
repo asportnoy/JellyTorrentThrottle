@@ -1,6 +1,6 @@
 services:
   jelly-torrent-throttle:
-    image: jedrzejme/jelly-torrent-throttle:v1.0.0
+    image: jedrzejme/jelly-torrent-throttle:v1.0.1
     container_name: jelly-torrent-throttle
     restart: unless-stopped
     ports:
