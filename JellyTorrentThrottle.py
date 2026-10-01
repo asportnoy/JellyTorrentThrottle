@@ -143,6 +143,22 @@ def _qb_api_get_json(endpoint: str) -> Optional[dict]:
         return None
 
 
+def _qb_api_get_text(endpoint: str) -> Optional[str]:
+    """GET a qBittorrent API endpoint and return the raw response text."""
+    if not _qb_ensure_auth():
+        return None
+    try:
+        resp = _session.get(f"{QB_URL}{endpoint}", timeout=10)
+        if resp.status_code == 403:
+            if _qb_login():
+                resp = _session.get(f"{QB_URL}{endpoint}", timeout=10)
+        resp.raise_for_status()
+        return resp.text.strip()
+    except Exception as exc:
+        log.error("GET %s failed: %s", endpoint, exc)
+        return None
+
+
 def _qb_set_speed_limits(dl_limit: int, ul_limit: int) -> bool:
     """Directly set global download/upload limits.
 
@@ -164,36 +180,34 @@ def _qb_set_speed_limits(dl_limit: int, ul_limit: int) -> bool:
     return ok_dl and ok_ul
 
 
-def _qb_fetch_alt_limits() -> tuple:
-    """Read the alt-speed limits configured in qBittorrent preferences.
+def _qb_get_alt_speed_enabled() -> Optional[bool]:
+    """Read qBittorrent's "alternative speed limits" toggle state.
 
-    Returns (alt_dl_limit, alt_up_limit) matching the unit expected by
-    setDownloadLimit / setUploadLimit, or None on failure.
+    This is the same on/off switch exposed in the qBittorrent UI (the
+    turtle icon). Returns True/False, or None on failure.
     """
-    prefs = _qb_api_get_json("/api/v2/app/preferences")
-    if prefs is None:
+    text = _qb_api_get_text("/api/v2/transfer/speedLimitsMode")
+    if text is None:
         return None
-    alt_dl = prefs.get("alt_dl_limit", 0)
-    alt_ul = prefs.get("alt_up_limit", 0)
+    return text == "1"
 
-    # qBittorrent returns bytes/s — convert to KiB/s for internal use
-    alt_dl_kib = alt_dl // 1024 if alt_dl else 0
-    alt_ul_kib = alt_ul // 1024 if alt_ul else 0
-    log.info("Fetched qBittorrent alt-speed limits: DL %s, UL %s",
-             _format_kib_per_s(alt_dl_kib), _format_kib_per_s(alt_ul_kib))
-    return (alt_dl_kib, alt_ul_kib)
+
+def _qb_toggle_alt_speed() -> bool:
+    """Flip qBittorrent's "alternative speed limits" toggle."""
+    return _qb_api_post("/api/v2/transfer/toggleSpeedLimitsMode")
 
 
 # ── Throttle / Restore helpers ───────────────────────────────────────────────
 _throttle_dl: int = THROTTLE_DL
 _throttle_ul: int = THROTTLE_UL
-_limits_resolved: bool = False
 
-# Saved limits from before throttling so we can restore them exactly.
+# 'alternative' mode: tracks whether *we* turned on alt-speed limits, so we
+# only turn them back off if the user hadn't already enabled them manually.
+_alt_speed_enabled_by_us: bool = False
+
+# 'custom' mode: saved limits from before throttling so we can restore them.
 _saved_dl: Optional[int] = None
 _saved_ul: Optional[int] = None
-# Whether qBittorrent is currently throttled (so we know when to re-capture
-# the pre-throttle limits vs. when to just keep the existing saved values).
 _is_throttled: bool = False
 
 
@@ -214,30 +228,40 @@ def _qb_get_current_limits() -> Optional[tuple]:
     return (dl_kib, ul_kib)
 
 
-def _resolve_throttle_limits():
-    """On first call, resolve the actual byte-per-second throttle limits.
+def _throttle_alternative():
+    """Turn on qBittorrent's alternative speed limits toggle, if not already on.
 
-    - 'alternative' mode: reads qBittorrent's configured alt-speed limits.
-    - 'custom' mode: uses THROTTLE_DL / THROTTLE_UL from .env directly.
+    qBittorrent itself applies whatever alt-speed limits the user configured
+    in its UI/preferences, and remembers the normal limits underneath — so
+    there is nothing for us to read, save, or restore.
     """
-    global _throttle_dl, _throttle_ul, _limits_resolved
-    if _limits_resolved:
+    global _alt_speed_enabled_by_us
+    enabled = _qb_get_alt_speed_enabled()
+    if enabled is None:
+        log.warning("Could not read alt-speed toggle state; skipping")
         return
-    if SPEED_MODE == "alternative":
-        result = _qb_fetch_alt_limits()
-        if result:
-            _throttle_dl, _throttle_ul = result
-            log.info("Using qBittorrent alt-speed limits: DL %s, UL %s",
-                     _format_kib_per_s(_throttle_dl), _format_kib_per_s(_throttle_ul))
-        else:
-            log.warning("Could not fetch alt-speed limits; falling back to .env values")
-    _limits_resolved = True
+    if enabled:
+        log.info("Alt-speed limits already enabled (user-controlled); leaving as-is")
+        _alt_speed_enabled_by_us = False
+        return
+    if _qb_toggle_alt_speed():
+        _alt_speed_enabled_by_us = True
+        log.info("Enabled qBittorrent alt-speed limits")
 
 
-def throttle():
-    """Save current speed limits, then apply throttle limits."""
+def _restore_alternative():
+    """Turn off the alt-speed limits toggle, but only if we were the ones who enabled it."""
+    global _alt_speed_enabled_by_us
+    if not _alt_speed_enabled_by_us:
+        return
+    if _qb_toggle_alt_speed():
+        log.info("Disabled qBittorrent alt-speed limits")
+    _alt_speed_enabled_by_us = False
+
+
+def _throttle_custom():
+    """Save current speed limits, then apply the configured custom limits."""
     global _saved_dl, _saved_ul, _is_throttled
-    _resolve_throttle_limits()
 
     # Save current (pre-throttle) limits before overwriting them. This only
     # happens when transitioning from "not throttled" to "throttled" so that
@@ -259,7 +283,7 @@ def throttle():
     _qb_set_speed_limits(_throttle_dl, _throttle_ul)
 
 
-def restore():
+def _restore_custom():
     """Restore speed limits to whatever they were before throttling.
 
     Keeps the saved values so that duplicate restore calls (e.g. Pause then
@@ -274,6 +298,22 @@ def restore():
              _format_kib_per_s(dl), _format_kib_per_s(ul))
     _qb_set_speed_limits(dl, ul)
     _is_throttled = False
+
+
+def throttle():
+    """Apply throttling using the configured SPEED_MODE."""
+    if SPEED_MODE == "alternative":
+        _throttle_alternative()
+    else:
+        _throttle_custom()
+
+
+def restore():
+    """Undo throttling using the configured SPEED_MODE."""
+    if SPEED_MODE == "alternative":
+        _restore_alternative()
+    else:
+        _restore_custom()
 
 
 # ── Active-playback counter ─────────────────────────────────────────────────
