@@ -2,7 +2,7 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ main, copilot/tweak-gh-workflow-publish-gh-packages ]
+    branches: [ main ]
     paths:
       - 'JellyTorrentThrottle.py'
       - 'requirements.txt'
