@@ -192,6 +192,9 @@ _limits_resolved: bool = False
 # Saved limits from before throttling so we can restore them exactly.
 _saved_dl: Optional[int] = None
 _saved_ul: Optional[int] = None
+# Whether qBittorrent is currently throttled (so we know when to re-capture
+# the pre-throttle limits vs. when to just keep the existing saved values).
+_is_throttled: bool = False
 
 
 def _qb_get_current_limits() -> Optional[tuple]:
@@ -233,11 +236,16 @@ def _resolve_throttle_limits():
 
 def throttle():
     """Save current speed limits, then apply throttle limits."""
-    global _saved_dl, _saved_ul
+    global _saved_dl, _saved_ul, _is_throttled
     _resolve_throttle_limits()
 
-    # Save current limits before overwriting (only on first throttle)
-    if _saved_dl is None:
+    # Save current (pre-throttle) limits before overwriting them. This only
+    # happens when transitioning from "not throttled" to "throttled" so that
+    # repeated Play/Resume events while already throttled don't clobber the
+    # saved values with the throttled ones. Re-reading on every new cycle
+    # (instead of caching forever) ensures we pick up limits the user may
+    # have reconfigured in qBittorrent since the last restore.
+    if not _is_throttled:
         current = _qb_get_current_limits()
         if current:
             _saved_dl, _saved_ul = current
@@ -246,6 +254,7 @@ def throttle():
         else:
             _saved_dl, _saved_ul = 0, 0
             log.warning("Could not read current limits; will restore to unlimited")
+        _is_throttled = True
 
     _qb_set_speed_limits(_throttle_dl, _throttle_ul)
 
@@ -254,14 +263,17 @@ def restore():
     """Restore speed limits to whatever they were before throttling.
 
     Keeps the saved values so that duplicate restore calls (e.g. Pause then
-    Stop for the same session) are idempotent. The saved values are only
-    overwritten when throttle() is called again.
+    Stop for the same session) are idempotent. The saved values are reset
+    after restoring so the next throttle() call re-reads qBittorrent's
+    current configured limits, rather than reusing a possibly stale cache.
     """
+    global _is_throttled
     dl = _saved_dl if _saved_dl is not None else 0
     ul = _saved_ul if _saved_ul is not None else 0
     log.info("Restoring previous limits: DL %s, UL %s",
              _format_kib_per_s(dl), _format_kib_per_s(ul))
     _qb_set_speed_limits(dl, ul)
+    _is_throttled = False
 
 
 # ── Active-playback counter ─────────────────────────────────────────────────
