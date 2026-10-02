@@ -201,10 +201,6 @@ def _qb_toggle_alt_speed() -> bool:
 _throttle_dl: int = THROTTLE_DL
 _throttle_ul: int = THROTTLE_UL
 
-# 'alternative' mode: tracks whether *we* turned on alt-speed limits, so we
-# only turn them back off if the user hadn't already enabled them manually.
-_alt_speed_enabled_by_us: bool = False
-
 # 'custom' mode: saved limits from before throttling so we can restore them.
 _saved_dl: Optional[int] = None
 _saved_ul: Optional[int] = None
@@ -229,44 +225,34 @@ def _qb_get_current_limits() -> Optional[tuple]:
 
 
 def _throttle_alternative():
-    """Turn on qBittorrent's alternative speed limits toggle, if not already on.
+    """Ensure qBittorrent's alternative speed limits are enabled.
 
     qBittorrent itself applies whatever alt-speed limits the user configured
-    in its UI/preferences, and remembers the normal limits underneath — so
-    there is nothing for us to read, save, or restore.
+    in its UI/preferences, so there is nothing for us to read or save.
+    toggleSpeedLimitsMode only flips state, so check first.
     """
-    global _alt_speed_enabled_by_us
     enabled = _qb_get_alt_speed_enabled()
     if enabled is None:
         log.warning("Could not read alt-speed toggle state; skipping")
         return
     if enabled:
-        if _alt_speed_enabled_by_us:
-            log.debug("Alt-speed limits already enabled by us; leaving as-is")
-        else:
-            log.info("Alt-speed limits already enabled (user-controlled); leaving as-is")
+        log.info("Alt-speed limits already enabled")
         return
     if _qb_toggle_alt_speed():
-        _alt_speed_enabled_by_us = True
         log.info("Enabled qBittorrent alt-speed limits")
 
 
 def _restore_alternative():
-    """Turn off the alt-speed limits toggle, but only if we were the ones who enabled it."""
-    global _alt_speed_enabled_by_us
-    if not _alt_speed_enabled_by_us:
-        return
-    # toggleSpeedLimitsMode only flips state, so check first to avoid
-    # accidentally re-enabling alt-speed limits.
+    """Ensure qBittorrent's alternative speed limits are disabled."""
     enabled = _qb_get_alt_speed_enabled()
     if enabled is None:
-        log.warning("Could not read alt-speed toggle state; will retry on next restore")
+        log.warning("Could not read alt-speed toggle state; skipping")
         return
-    if enabled:
-        if not _qb_toggle_alt_speed():
-            return
+    if not enabled:
+        log.info("Alt-speed limits already disabled")
+        return
+    if _qb_toggle_alt_speed():
         log.info("Disabled qBittorrent alt-speed limits")
-    _alt_speed_enabled_by_us = False
 
 
 def _throttle_custom():
