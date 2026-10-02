@@ -241,8 +241,10 @@ def _throttle_alternative():
         log.warning("Could not read alt-speed toggle state; skipping")
         return
     if enabled:
-        log.info("Alt-speed limits already enabled (user-controlled); leaving as-is")
-        _alt_speed_enabled_by_us = False
+        if _alt_speed_enabled_by_us:
+            log.debug("Alt-speed limits already enabled by us; leaving as-is")
+        else:
+            log.info("Alt-speed limits already enabled (user-controlled); leaving as-is")
         return
     if _qb_toggle_alt_speed():
         _alt_speed_enabled_by_us = True
@@ -254,7 +256,15 @@ def _restore_alternative():
     global _alt_speed_enabled_by_us
     if not _alt_speed_enabled_by_us:
         return
-    if _qb_toggle_alt_speed():
+    # toggleSpeedLimitsMode only flips state, so check first to avoid
+    # accidentally re-enabling alt-speed limits.
+    enabled = _qb_get_alt_speed_enabled()
+    if enabled is None:
+        log.warning("Could not read alt-speed toggle state; will retry on next restore")
+        return
+    if enabled:
+        if not _qb_toggle_alt_speed():
+            return
         log.info("Disabled qBittorrent alt-speed limits")
     _alt_speed_enabled_by_us = False
 
